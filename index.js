@@ -1,6 +1,9 @@
 var http = require('http');
 var https = require('https');
 var url = require('url');
+var fs = require('fs');
+var path = require('path');
+var sanitize = require('sanitize-filename');
 
 var validURL = /^https?:\/\/[a-z\u00a1-\uffff0-9]+/;
 
@@ -20,6 +23,7 @@ function app (request, response) {
   }
 
   var requestedURL = request.url.slice(1);
+  request._cache_filename = path.join(__dirname, "cache", sanitize(requestedURL))
   if (requestedURL === '') {
     // INDEX
     response.write('Usage: http://' + request.headers.host + '/URL');
@@ -31,6 +35,15 @@ function app (request, response) {
     response.write('URL must be valid, got: ' + requestedURL);
     response.end();
     return;
+  } else if (fs.existsSync(request._cache_filename)) {
+    fs.readFile(request._cache_filename + ".metadata", (err, json) => {
+      var metadata = JSON.parse(json)
+      response.statusCode = metadata.status
+      setHeaders(response, metadata.headers)
+
+      var filestream = fs.createReadStream(request._cache_filename)
+      filestream.pipe(response)
+    })
   } else {
     // PROXY REQUEST
     var options = url.parse(requestedURL);
@@ -57,18 +70,30 @@ function handleError (response, request) {
 }
 
 function handleGet (response, request) {
+  var cachestream = fs.createWriteStream(request._cache_filename)
   return function (res) {
     response.statusCode = res.statusCode;
 
-    for (var header in res.headers) {
-      if (header === 'access-control-allow-origin' || !res.headers.hasOwnProperty(header)) {
-        continue;
-      }
-      response.setHeader(header, res.headers[header]);
-    }
+    setHeaders(response, res.headers)
 
-    res.on('data', response.write.bind(response));
-    res.on('end', response.end.bind(response));
+    res.on('data', (data) => {
+      response.write(data)
+      cachestream.write(data)
+    });
+    res.on('end', (err) => {
+      response.end(err)
+      cachestream.end(err)
+
+      fs.writeFile(
+        request._cache_filename + ".metadata",
+        JSON.stringify({
+          status: res.statusCode,
+          headers: res.headers,
+        }),
+        'utf8',
+        (err) => console.error(err)
+      )
+    });
   }
 }
 
@@ -82,4 +107,13 @@ function stripHeaders (headers) {
     }
   }
   return strippedHeaders;
+}
+
+function setHeaders(response, headers) {
+  for (var header in headers) {
+    if (header === 'access-control-allow-origin' || headers.hasOwnProperty(header)) {
+      continue;
+    }
+    response.setHeader(header, headers[header]);
+  }
 }
