@@ -24,6 +24,7 @@ function app (request, response) {
 
   var requestedURL = request.url.slice(1);
   request._cache_filename = path.join(__dirname, "cache", sanitize(requestedURL))
+  request._cache_filename_metadata = request._cache_filename + ".metadata"
   if (requestedURL === '') {
     // INDEX
     response.write('Usage: http://' + request.headers.host + '/URL');
@@ -35,8 +36,8 @@ function app (request, response) {
     response.write('URL must be valid, got: ' + requestedURL);
     response.end();
     return;
-  } else if (fs.existsSync(request._cache_filename)) {
-    fs.readFile(request._cache_filename + ".metadata", (err, json) => {
+  } else if (fs.existsSync(request._cache_filename_metadata) && fs.existsSync(request._cache_filename)) {
+    fs.readFile(request._cache_filename_metadata, (err, json) => {
       var metadata = JSON.parse(json)
       response.statusCode = metadata.status
       setHeaders(response, metadata.headers)
@@ -85,13 +86,13 @@ function handleGet (response, request) {
       cachestream.end(err)
 
       fs.writeFile(
-        request._cache_filename + ".metadata",
+        request._cache_filename_metadata,
         JSON.stringify({
           status: res.statusCode,
           headers: res.headers,
         }),
         'utf8',
-        (err) => console.error(err)
+        (err) => err && console.error(err)
       )
     });
   }
